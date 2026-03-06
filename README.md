@@ -1,6 +1,6 @@
 # lseg-python-mcp-bridge
 
-Local stdio MCP server for the LSEG Data Library for Python. The bridge keeps a read-only tool surface for session verification, schema inspection, code validation, live snapshot retrieval, historical retrieval, and local example search.
+Local stdio MCP server for the LSEG Data Library for Python. The bridge keeps a read-only tool surface for session verification, schema inspection, code validation, live snapshot retrieval, historical retrieval, local example search, and reusable `lseg.data.content.search` retrieval workflows.
 
 The project targets Python 3.14 and uses environment variables only for authentication. Credentials must never be committed.
 
@@ -11,6 +11,7 @@ The project targets Python 3.14 and uses environment variables only for authenti
   - `lseg.data.get_data`
   - `lseg.data.get_history`
   - `lseg.data.session.platform.Definition`
+  - `lseg.data.content.search`
 
 ## Features
 
@@ -19,6 +20,7 @@ The project targets Python 3.14 and uses environment variables only for authenti
 - Dynamic schema/signature/docstring introspection
 - AST-based validation for common `lseg.data` usage patterns
 - Safe live validation for confidently resolved literal `get_data` and `get_history` calls
+- Reusable content-search workflows for metadata discovery, regional retrieval, company resolution, and RIC lookup
 - Local example and documentation search with cached ranking
 - Structured JSON-safe errors with secret redaction
 - Session reuse via a singleton `SessionManager`
@@ -146,6 +148,23 @@ When `LSEG_AUTH_MODE=auto`, the bridge tries auth modes in this order:
 - Applies to both `get_live_data` and `get_history`
 - Preview rows are intentionally compact for Codex-style tool output
 
+## Content Search Capability Model
+
+The bridge includes a reusable internal `content_search.py` layer for `from lseg.data.content import search`. It is not examples-only code. Downstream bridge code can use it to:
+
+- fetch and filter metadata definitions for property discovery
+- validate selected fields and `order_by` clauses against metadata
+- search a topic, company, or subject across multiple regions
+- resolve companies using multiple identifiers such as ticker, SEDOL, and market context
+- resolve RIC candidates for a ticker on a specific exchange country or exchange code
+
+The public MCP wrappers for these workflows are:
+
+- `get_search_metadata`
+- `search_by_region`
+- `company_lookup`
+- `lookup_ric`
+
 ## Run As A Stdio MCP Server
 
 ```bash
@@ -207,6 +226,11 @@ Returns support flags for:
 - schema introspection
 - code validation
 - example search
+- content search
+- metadata discovery
+- regional search
+- company lookup
+- RIC lookup
 - supported auth modes
 
 ### `get_schema`
@@ -234,6 +258,33 @@ Read-only wrapper around `ld.get_data()` with JSON-safe table output.
 ### `get_history`
 
 Read-only wrapper around `ld.get_history()` with JSON-safe table output.
+
+### `get_search_metadata`
+
+Returns normalized metadata for `lseg.data.content.search.metadata.Definition`, including:
+
+- property definitions
+- property type
+- searchable flag
+- sortable flag
+- navigable flag
+- groupable flag
+- exact flag
+- symbol flag
+
+It also supports filtering by property name or any of the boolean metadata attributes.
+
+### `search_by_region`
+
+Runs a reusable regional content search workflow for a topic, company, or subject. Results are accumulated across regions and returned in a stable normalized shape.
+
+### `company_lookup`
+
+Resolves one or more company lookup requests using multiple identifiers. The bridge separates the query anchor from the structured filter so downstream code can reuse the matching logic cleanly.
+
+### `lookup_ric`
+
+Resolves RIC candidates for a ticker with exchange-country and/or exchange-code filters. This is intended for downstream symbol resolution workflows.
 
 ### `search_examples`
 
@@ -276,6 +327,11 @@ Common error codes:
 - `example_search_failed`
 
 Secrets from configured environment variables are redacted from returned messages and details.
+
+Search-specific validation failures usually surface as:
+
+- `validation_failed` for unsupported view names, property names, `select_fields`, or non-sortable `order_by` properties
+- `data_request_failed` for LSEG content-search execution failures or entitlement issues
 
 ## Compact Tool Examples
 
@@ -330,6 +386,74 @@ Secrets from configured environment variables are redacted from returned message
 }
 ```
 
+### `get_search_metadata`
+
+```json
+{
+  "view": "SEARCH_ALL",
+  "searchable": true
+}
+```
+
+### `search_by_region`
+
+```json
+{
+  "query": "semiconductors",
+  "regions": ["USA", "GBR", "JPN"],
+  "view": "SEARCH_ALL",
+  "select_fields": [
+    "RIC",
+    "PrimaryRIC",
+    "TickerSymbol",
+    "PermID",
+    "CompanyName",
+    "PrimaryExchange",
+    "ExchangeCountry"
+  ],
+  "top_per_region": 10
+}
+```
+
+### `company_lookup`
+
+```json
+{
+  "requests": [
+    {
+      "ticker": "AA",
+      "sedol": "BYNF418",
+      "exchange_country": "USA",
+      "exchange_code": "NYS",
+      "name": "ALCOA CORP"
+    }
+  ]
+}
+```
+
+### `lookup_ric`
+
+```json
+{
+  "ticker": "AA",
+  "exchange_country": "USA",
+  "exchange_code": "NYS",
+  "view": "EQUITY_QUOTES",
+  "select_fields": [
+    "RIC",
+    "PrimaryRIC",
+    "TickerSymbol",
+    "CommonName",
+    "ExchangeName",
+    "ExchangeCode",
+    "ExchangeCountry",
+    "AssetState"
+  ],
+  "top": 25,
+  "order_by": "ExchangeName asc"
+}
+```
+
 ### `search_examples`
 
 ```json
@@ -346,13 +470,13 @@ Secrets from configured environment variables are redacted from returned message
 Syntax check:
 
 ```bash
-python -m py_compile server.py auth.py schemas.py validator.py live_data.py examples.py
+.venv/bin/python -m py_compile server.py auth.py schemas.py validator.py live_data.py examples.py content_search.py
 ```
 
 Schema smoke check:
 
 ```bash
-python - <<'PY'
+.venv/bin/python - <<'PY'
 from schemas import get_schema
 print(get_schema("lseg.data.get_data"))
 print(get_schema("lseg.data.get_history"))
@@ -362,7 +486,7 @@ PY
 No-credentials auth check:
 
 ```bash
-python - <<'PY'
+.venv/bin/python - <<'PY'
 from auth import SessionManager
 print(SessionManager.instance().ping_session())
 PY
@@ -371,10 +495,26 @@ PY
 Validation smoke check:
 
 ```bash
-python - <<'PY'
+.venv/bin/python - <<'PY'
 from validator import validate_code
 print(validate_code("import lseg.data as ld\nld.get_data(universe=['IBM.N'], fields=['BID'])"))
 print(validate_code("from lseg.data import get_history\nget_history(universe='GOOG.O')"))
+PY
+```
+
+Content-search model and error-path smoke check:
+
+```bash
+.venv/bin/python - <<'PY'
+import lseg.data as ld
+from server import get_search_metadata
+from content_search import CompanyLookupRequest, RicLookupRequest, RegionalSearchRequest, resolve_search_view
+
+print(resolve_search_view(ld.discovery.Views.SEARCH_ALL))
+print(RegionalSearchRequest.model_validate({"query": "banks", "regions": ["USA", "GBR"]}).model_dump())
+print(CompanyLookupRequest.model_validate({"ticker": "AA", "sedol": "BYNF418", "exchange_country": "USA"}).model_dump())
+print(RicLookupRequest.model_validate({"ticker": "AA", "exchange_country": "USA"}).model_dump())
+print(get_search_metadata())
 PY
 ```
 
@@ -407,6 +547,13 @@ PY
 
 - Confirm the path matches a real importable symbol.
 - Start with `lseg.data.get_data`, `lseg.data.get_history`, or `lseg.data.session.platform.Definition`.
+
+### Content search metadata or filter failures
+
+- Use `get_search_metadata` to inspect the view-specific property set before choosing `select_fields` or `order_by`.
+- The bridge validates `select_fields` and `order_by` against live metadata, so unsupported properties fail early with `validation_failed`.
+- If a short property name is ambiguous in a nested metadata tree, use the fully qualified property path instead of the leaf name.
+- Available properties and views can vary with the installed SDK and the authenticated account entitlements.
 
 ### Example search returns no matches
 

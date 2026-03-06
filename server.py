@@ -14,6 +14,14 @@ from auth import (
     normalize_error,
     python_version,
 )
+from content_search import (
+    DEFAULT_DISCOVERY_SELECT_FIELDS,
+    DEFAULT_RIC_SELECT_FIELDS,
+    company_lookup as fetch_company_lookup,
+    get_search_metadata as fetch_search_metadata,
+    lookup_ric as fetch_ric_lookup,
+    search_by_region as fetch_search_by_region,
+)
 from examples import search_examples as search_local_examples
 from live_data import get_history_data as fetch_history_data
 from live_data import get_live_data as fetch_live_data
@@ -83,6 +91,11 @@ def list_capabilities() -> dict[str, Any]:
         "schema_introspection_supported": True,
         "code_validation_supported": True,
         "example_search_supported": True,
+        "content_search_supported": True,
+        "search_metadata_supported": True,
+        "regional_search_supported": True,
+        "company_lookup_supported": True,
+        "ric_lookup_supported": True,
         "supported_auth_modes": [
             "platform_client_credentials",
             "platform_password",
@@ -154,6 +167,138 @@ def get_live_data(
     }
     try:
         return fetch_live_data(universe, fields, parameters=parameters, row_limit=row_limit)
+    except Exception as exc:
+        return _error_response(defaults, exc, "data_request_failed")
+
+
+@mcp.tool()
+def get_search_metadata(
+    view: str = "SEARCH_ALL",
+    property_name: str | None = None,
+    searchable: bool | None = None,
+    sortable: bool | None = None,
+    navigable: bool | None = None,
+    groupable: bool | None = None,
+    exact: bool | None = None,
+    symbol: bool | None = None,
+) -> dict[str, Any]:
+    defaults = {
+        "view": view,
+        "property_count": 0,
+        "properties": [],
+        "searchable_properties": [],
+        "sortable_properties": [],
+        "navigable_properties": [],
+        "groupable_properties": [],
+        "exact_properties": [],
+        "symbol_properties": [],
+    }
+    try:
+        return fetch_search_metadata(
+            view=view,
+            property_name=property_name,
+            searchable=searchable,
+            sortable=sortable,
+            navigable=navigable,
+            groupable=groupable,
+            exact=exact,
+            symbol=symbol,
+        ).model_dump(mode="json")
+    except Exception as exc:
+        return _error_response(defaults, exc, "data_request_failed")
+
+
+@mcp.tool()
+def search_by_region(
+    query: str,
+    regions: list[str],
+    view: str = "SEARCH_ALL",
+    select_fields: list[str] | None = None,
+    top_per_region: int = 25,
+    additional_filter: str | None = None,
+    order_by: str | None = None,
+) -> dict[str, Any]:
+    defaults = {
+        "request": {
+            "query": query,
+            "regions": regions,
+            "view": view,
+            "select_fields": select_fields or list(DEFAULT_DISCOVERY_SELECT_FIELDS),
+            "top_per_region": top_per_region,
+            "additional_filter": additional_filter,
+            "order_by": order_by,
+        },
+        "total_row_count": 0,
+        "region_results": [],
+        "records": [],
+    }
+    try:
+        return fetch_search_by_region(
+            {
+                "query": query,
+                "regions": regions,
+                "view": view,
+                "select_fields": select_fields,
+                "top_per_region": top_per_region,
+                "additional_filter": additional_filter,
+                "order_by": order_by,
+            }
+        ).model_dump(mode="json")
+    except Exception as exc:
+        return _error_response(defaults, exc, "data_request_failed")
+
+
+@mcp.tool()
+def company_lookup(requests: list[dict[str, Any]]) -> dict[str, Any]:
+    defaults = {
+        "request_count": len(requests),
+        "total_row_count": 0,
+        "results": [],
+    }
+    try:
+        return fetch_company_lookup(requests).model_dump(mode="json")
+    except Exception as exc:
+        return _error_response(defaults, exc, "data_request_failed")
+
+
+@mcp.tool()
+def lookup_ric(
+    ticker: str,
+    exchange_country: str | None = None,
+    exchange_code: str | None = None,
+    view: str = "EQUITY_QUOTES",
+    select_fields: list[str] | None = None,
+    top: int = 100,
+    order_by: str = "ExchangeName asc",
+) -> dict[str, Any]:
+    defaults = {
+        "request": {
+            "ticker": ticker,
+            "exchange_country": exchange_country,
+            "exchange_code": exchange_code,
+            "view": view,
+            "select_fields": select_fields or list(DEFAULT_RIC_SELECT_FIELDS),
+            "top": top,
+            "order_by": order_by,
+        },
+        "query": ticker,
+        "filter": "",
+        "row_count": 0,
+        "resolved_rics": [],
+        "records": [],
+    }
+    try:
+        return fetch_ric_lookup(
+            {
+                "ticker": ticker,
+                "exchange_country": exchange_country,
+                "exchange_code": exchange_code,
+                "view": view,
+                "select_fields": select_fields,
+                "top": top,
+                "order_by": order_by,
+            }
+        ).model_dump(mode="json")
     except Exception as exc:
         return _error_response(defaults, exc, "data_request_failed")
 
