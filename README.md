@@ -559,9 +559,3 @@ PY
 
 - Confirm `LSEG_EXAMPLES_DIR` points to a real directory.
 - Populate it with local `.py`, `.ipynb`, `.md`, `.rst`, `.txt`, `.json`, `.yaml`, or `.yml` files.
-
-## Security Notes
-
-- Credentials must never be committed.
-- Keep `.env` files out of git.
-- The bridge intentionally exposes read-only retrieval and validation flows only.
